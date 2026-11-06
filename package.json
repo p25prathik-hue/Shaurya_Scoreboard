@@ -1,0 +1,21 @@
+{
+  "name": "shaurya-live",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shaurya'26 Live — live scores, standings and organiser tools for IIMA's sports fest. Web app in www/, Android app via Capacitor.",
+  "scripts": {
+    "serve": "npx --yes http-server www -p 8080 -c-1",
+    "android:add": "npx cap add android && python3 scripts/patch_android.py",
+    "android:sync": "npx cap sync android",
+    "android:build": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/browser": "^7.0.0",
+    "@capacitor/core": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

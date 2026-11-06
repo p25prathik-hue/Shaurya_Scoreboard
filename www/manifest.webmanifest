@@ -1,0 +1,16 @@
+{
+  "name": "Shaurya'26 Live",
+  "short_name": "Shaurya Live",
+  "description": "Live scores, standings and venues for Shaurya'26 at IIM Ahmedabad.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0a0b",
+  "theme_color": "#0c0a0b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "appId": "com.iimasportscomm.shauryalive",
+  "appName": "Shaurya Live",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#0c0a0b"
+  }
+}
