@@ -2,6 +2,7 @@
 //   SupaBackend — real data through Supabase (auth, Postgres, realtime)
 //   DemoBackend — in-memory sample data when no Supabase project is configured
 import { buildDemo } from './demo-data.js';
+import { withRules } from './sports-config.js';
 import { uuid } from './util.js';
 
 const CFG = window.SHAURYA_CONFIG || {};
@@ -449,6 +450,7 @@ class Store {
 
   async reloadPublic() {
     const d = await this.backend.loadPublic();
+    d.sports = (d.sports || []).map(withRules);
     Object.assign(this, d);
     this.sortMatches();
     this.index();
@@ -605,6 +607,7 @@ class Store {
       if (i >= 0) l[i] = row; else l.push(row);
       this.playersCache.set(row.team_id, l);
     } else if (Array.isArray(this[table])) {
+      if (table === 'sports') row = withRules(row);
       const i = this[table].findIndex((x) => x.id === row.id);
       if (i >= 0) this[table][i] = row; else this[table].push(row);
       if (table === 'matches') this.sortMatches();

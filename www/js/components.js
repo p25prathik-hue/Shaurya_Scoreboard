@@ -1,7 +1,7 @@
 // Reusable UI pieces
 import { store } from './store.js';
 import { html, raw, esc, timeOf, initials, badgeColor, whenLabel, fmtNum } from './util.js';
-import { stageLabel, scoreLine, breakdown } from './scoring.js';
+import { stageLabel, scoreLine, breakdown, catRules, tieNote, isKnockout } from './scoring.js';
 
 const P = {
   home: '<path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/>',
@@ -147,20 +147,22 @@ function cricketLines(m) {
   const d = m.detail || {};
   const inns = d.innings || [];
   if (!inns.length) return '';
-  const target = inns.length >= 2 ? inns[0].runs + 1 : null;
+  const mains = inns.filter((x) => !x.super);
+  const target = mains.length >= 2 ? mains[0].runs + 1 : null;
+  let mi = 0;
   return html`<div class="stack tight small" style="border-top:1px solid var(--line);padding-top:10px">
-    ${inns.map((inn, i) => html`<div class="row between"><span>${store.teamShort(inn.bat === 'a' ? m.team_a_id : m.team_b_id)} · ${i === 0 ? '1st' : '2nd'} innings</span><span class="num"><b>${inn.runs}/${inn.wkts}</b> <span class="muted">(${Math.floor(inn.balls / 6)}.${inn.balls % 6} / ${d.overs} ov)</span></span></div>`)}
-    ${target && m.status === 'live' ? html`<div class="muted">Target ${target}</div>` : ''}
+    ${inns.map((inn) => html`<div class="row between"><span>${store.teamShort(inn.bat === 'a' ? m.team_a_id : m.team_b_id)} · ${inn.super ? 'Super Over' : ++mi === 1 ? '1st innings' : '2nd innings'}</span><span class="num"><b>${inn.runs}/${inn.wkts}</b> <span class="muted">(${Math.floor(inn.balls / 6)}.${inn.balls % 6} / ${inn.super ? 1 : d.overs} ov)</span></span></div>`)}
+    ${target && m.status === 'live' && !inns[inns.length - 1].super ? html`<div class="muted">Target ${target}</div>` : ''}
     ${scoreLine(m, store.sport(m.sport_id)).note && m.status === 'live' ? html`<div class="soft">${scoreLine(m, store.sport(m.sport_id)).note}</div>` : ''}
   </div>`;
 }
 
 function breakdownTable(m, bd) {
-  return html`<table class="breakdown" style="border-top:1px solid var(--line)"><thead><tr><th></th>${bd.cols.map((c) => html`<th>${c.label}</th>`)}<th>${bd.totalLabel}</th></tr></thead>
+  return html`<div class="table-wrap"><table class="breakdown" style="border-top:1px solid var(--line)"><thead><tr><th></th>${bd.cols.map((c) => html`<th title="${c.title || ''}">${c.label}</th>`)}<th>${bd.totalLabel}</th></tr></thead>
     <tbody>
       <tr><td>${store.teamShort(m.team_a_id, m.team_a_label)}</td>${bd.cols.map((c) => html`<td class="${c.current ? 'cur' : ''}">${c.a === undefined ? '–' : fmtNum(c.a)}</td>`)}<td class="tot">${bd.totalA}</td></tr>
       <tr><td>${store.teamShort(m.team_b_id, m.team_b_label)}</td>${bd.cols.map((c) => html`<td class="${c.current ? 'cur' : ''}">${c.b === undefined ? '–' : fmtNum(c.b)}</td>`)}<td class="tot">${bd.totalB}</td></tr>
-    </tbody></table>`;
+    </tbody></table></div>`;
 }
 
 export function rankingTable(m) {
@@ -194,4 +196,20 @@ export function sportOptions(selected, { includeAll = false, filter } = {}) {
 
 export function collegeName(id) {
   return esc(store.college(id)?.name || '');
+}
+
+// Rulebook format for this match (shown on the match page)
+export function formatCard(m, sport) {
+  if (!sport) return '';
+  const c = catRules(sport, m.category);
+  const tie = tieNote(sport, m.category);
+  const ko = isKnockout(m);
+  const lines = [];
+  if (c.format) lines.push(c.format);
+  if (m.stage === 'final' && c.final_best_of) lines.push(`This is the final: best of ${c.final_best_of}.`);
+  if (tie) lines.push(tie);
+  else if (ko && sport.scoring !== 'ranking') lines.push('Knockout: it must finish with a winner.');
+  if (!lines.length) return '';
+  return html`<details class="card details" ${raw('open')}><summary class="row between"><span>${icon('info', 16)} <b>Format · ${sport.name} ${m.category}</b></span><a class="small" href="#/formats?sport=${sport.id}" style="font-weight:700">All rules</a></summary>
+    <div class="stack tight small soft">${lines.map((l) => html`<span>${l}</span>`)}</div></details>`;
 }

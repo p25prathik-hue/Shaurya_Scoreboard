@@ -2,11 +2,13 @@
 import { store, isNative } from './store.js';
 import { ui } from './ui.js';
 import { html, raw, dayKey, todayKey, weekday, dayNum, timeOf, relTime, toast, qs, whenLabel, fmtNum } from './util.js';
-import { icon, matchCard, matchRow, scoreboard, teamBadge, kicker, pageHead, emptyState, mapsLink, statusPill } from './components.js';
+import { icon, matchCard, matchRow, scoreboard, teamBadge, kicker, pageHead, emptyState, mapsLink, statusPill, formatCard } from './components.js';
 import {
   isTableMatch, groupTeams, computeTable, playedResults, whatIf, qualStatus, trackSummary, nextRoundName,
   allowsDraw, marginOptions, marginLabel, defaultMargin, tiebreakName, medalTally, stageLabel,
+  bestOf, catRules, tieNote, squadLimits,
 } from './scoring.js';
+import { GENERAL_RULES } from './sports-config.js';
 
 const CFG = window.SHAURYA_CONFIG || {};
 
@@ -143,6 +145,7 @@ export function match({ params }) {
         <div class="cols">
           <div class="stack">
             ${scoreboard(m)}
+            ${formatCard(m, s)}
             ${m.stream_url ? html`<a class="card row" href="${m.stream_url}" target="_blank" rel="noopener" style="gap:14px;color:var(--text)"><span class="pin" style="width:44px;height:44px;border-radius:22px">${icon('play', 18)}</span><span class="grow"><b>Watch live</b><div class="small muted">Opens the stream</div></span>${icon('chev', 18)}</a>` : ''}
             ${canScore || store.isAdmin ? html`<div class="row wrap">
               ${canScore ? html`<a class="btn blue grow" href="#/org/score/${m.id}">${icon('radio', 18)} Open scoring pad</a>` : ''}
@@ -225,7 +228,7 @@ export function standings({ query }) {
       const link = (o) => '#/standings' + qs({ sport: sportId, cat, tab, ...o });
 
       const header = html`
-        ${pageHead('Standings', 'Groups, knockouts and the medal tally', '')}
+        ${pageHead('Standings', 'Groups, knockouts and the medal tally', '', html`<a class="btn small ghost" href="#/formats${qs({ sport: sportId })}">Rules</a>`)}
         <div class="tabs" role="tablist" style="margin-bottom:10px">
           ${[['groups', 'Groups'], ['knockouts', 'Knockouts'], ['medals', 'Medal tally']].map(([k, l]) => html`<button type="button" role="tab" data-act="go" data-href="${'#/standings' + qs({ sport: sportId, cat, tab: k })}" aria-selected="${tab === k}">${l}</button>`)}
         </div>
@@ -264,6 +267,7 @@ export function standings({ query }) {
 }
 
 function groupsView(sportId, cat, sport, query, link) {
+  sport = { ...sport, periods: bestOf(sport, { category: cat, stage: 'group' }) };
   const groupNames = new Set();
   store.teams.forEach((t) => t.sport_id === sportId && t.category === cat && t.group_name && groupNames.add(t.group_name));
   store.matches.forEach((m) => m.sport_id === sportId && m.category === cat && isTableMatch(m) && m.group_name && groupNames.add(m.group_name));
@@ -303,7 +307,7 @@ function groupsView(sportId, cat, sport, query, link) {
           <td>${r.p}</td><td>${r.w}</td>${showD ? html`<td>${r.d}</td>` : ''}<td>${r.l}</td><td class="num">${r.diff > 0 ? '+' : ''}${fmtNum(r.diff)}</td>
           <td class="pts">${fmtNum(r.pts)}</td><td><span class="pill ${q.key}">${q.label}</span></td></tr>`;
       })}</tbody></table></div>
-    <div class="tiny muted" style="padding-top:8px">Win ${fmtNum(sport.win_points)} pts${draws ? ` · draw ${fmtNum(sport.draw_points)}` : ''} · ties broken by ${tiebreakName(sport)}, then ${sport.scoring === 'goals' ? 'goals' : 'points'} scored. Dashed line = qualification cut-off.</div>
+    <div class="tiny muted" style="padding-top:8px">Win ${fmtNum(sport.win_points)} pts${draws ? ` · draw ${fmtNum(sport.draw_points)}` : ' · no draws'} · ties broken by ${tiebreakName(sport)}${sport.rules?.tiebreak?.[0] === 'for' ? '' : `, then ${sport.scoring === 'goals' ? 'goals' : 'points'} scored`}. Dashed line = qualification cut-off.${tieNote(sport, cat) ? ' ' + tieNote(sport, cat) : ''}</div>
   </section>`;
 
   const groupChips = groups.length > 1 ? html`<div class="chips" style="margin-bottom:8px">${groups.map((g) => html`<a class="chip small ${g === group ? 'on' : ''}" href="${link({ group: g })}">Group ${g}</a>`)}</div>` : '';
@@ -518,7 +522,7 @@ export function team({ params }) {
         <div class="cols">
           <div><div class="section-title"><h2>Fixtures</h2></div>
             ${tm.length ? tm.map((m) => matchRow(m)) : emptyState('No fixtures yet.')}</div>
-          <div><div class="section-title"><h2>Squad</h2><span class="small muted">${squad ? squad.length + ' players' : ''}</span></div>
+          <div><div class="section-title"><h2>Squad</h2><span class="small muted">${squad ? squad.length + ' players' : ''}${squadLimits(s, t.category) ? ` · rulebook ${squadLimits(s, t.category)[0]}–${squadLimits(s, t.category)[1]}` : ''}</span></div>
             ${squad === null ? html`<div class="loading"><div class="spinner"></div></div>` : squad.length ? squad.map((p) => html`<div class="player-row"><span class="no">${p.jersey || ''}</span><span style="font-weight:600">${p.name}</span><span class="small muted">${p.role || ''}</span></div>`) : emptyState('Squad not added yet.')}
             ${store.canManageTeam(t) ? html`<a class="btn small blue mt-s" href="#/org/team/${id}">${icon('edit', 16)} Edit squad</a>` : ''}
           </div>
@@ -668,4 +672,49 @@ function installCard() {
     <div class="small soft">${ios ? raw('<b>iPhone / iPad:</b> tap Share, then <b>Add to Home Screen</b>.') : raw('<b>Windows / Chrome:</b> use the install icon in the address bar. <b>iPhone:</b> Share → Add to Home Screen.')}</div>
     ${CFG.APK_URL ? html`<a class="btn small" href="${CFG.APK_URL}" target="_blank" rel="noopener">${icon('download', 16)} Android app (APK)</a>` : ''}
   </div>`;
+}
+
+// =====================================================================
+// FORMATS & RULES (from the Shaurya 2026 rulebook)
+// =====================================================================
+const fmtState = { q: '' };
+export function formats({ query }) {
+  return {
+    live: false,
+    mount() {
+      if (query.sport) setTimeout(() => document.getElementById('fmt-' + query.sport)?.scrollIntoView({ block: 'start' }), 50);
+    },
+    render() {
+      const q = fmtState.q.trim().toLowerCase();
+      const list = store.sports.filter((s) => !q || (s.name + ' ' + JSON.stringify(s.rules?.cat || {})).toLowerCase().includes(q));
+      return html`
+        ${pageHead('Formats & rules', 'Shaurya 2026 rulebook, sport by sport', '#/standings')}
+        <div class="card stack tight small soft">${GENERAL_RULES.map((r) => html`<span>• ${r}</span>`)}</div>
+        <div class="field mt"><label class="sr-only" for="fmt-q">Search sports</label><input id="fmt-q" class="input" type="search" placeholder="Search a sport" value="${fmtState.q}" data-input="q"></div>
+        <div class="grid two mt">${list.map((s) => sportRulesCard(s, query.sport === s.id))}</div>
+        <p class="footer-note">Summarised from the official Shaurya 2026 rulebook. The referee’s and SportsComm’s decisions are final. Questions: sportscomm@iima.ac.in</p>`;
+    },
+    input: { q(el) { fmtState.q = el.value; ui.refresh({ keepFocus: true }); } },
+  };
+}
+
+function sportRulesCard(s, highlight) {
+  const cats = s.categories?.length ? s.categories : Object.keys(s.rules?.cat || {});
+  const pts = s.scoring === 'ranking' ? 'Ranked by result — medals for the top 3' : `Win ${fmtNum(s.win_points)} pts${allowsDraw(s) ? ` · draw ${fmtNum(s.draw_points)}` : ' · no draws'}`;
+  return html`<section id="fmt-${s.id}" class="card stack" style="${highlight ? 'border-color:var(--accent-line)' : ''}">
+    <div class="row between"><h2 class="display" style="font-size:20px">${s.name}</h2><span class="small muted">${cats.join(' · ')}</span></div>
+    ${cats.map((c) => {
+      const r = catRules(s, c);
+      const tie = tieNote(s, c);
+      const ev = s.rules?.events?.[c];
+      return html`<div class="stack tight">
+        ${cats.length > 1 ? html`<b class="small">${c}</b>` : ''}
+        ${r.format ? html`<span class="small soft">${r.format}</span>` : ''}
+        ${tie ? html`<span class="small soft">${tie}</span>` : ''}
+        ${ev ? html`<div class="row wrap">${ev.map((e) => html`<span class="chip small" style="height:30px">${e}</span>`)}</div>` : ''}
+        ${r.squad ? html`<span class="tiny muted">Squad ${r.squad[0]}–${r.squad[1]} players</span>` : ''}
+      </div>`;
+    })}
+    <span class="tiny muted">${pts}</span>
+  </section>`;
 }

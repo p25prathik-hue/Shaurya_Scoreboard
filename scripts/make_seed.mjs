@@ -1,7 +1,8 @@
 // Generates supabase/seed_demo.sql from www/js/demo-data.js (sample data for trying the live app).
 // Usage: node scripts/make_seed.mjs
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { SPORTS } from '../www/js/sports-config.js';
 import { buildDemo } from '../www/js/demo-data.js';
 
 const d = buildDemo(['2026-11-20', '2026-11-21', '2026-11-22']);
@@ -39,7 +40,7 @@ const out = [
   ins('courts', d.courts.map((c) => ids(c, ['id', 'venue_id'])), ['id', 'venue_id', 'name']),
   ins('teams', d.teams.map((t) => ids(t, ['id', 'college_id'])), ['id', 'college_id', 'sport_id', 'category', 'group_name']),
   ins('players', d.players.map((p) => ids(p, ['id', 'team_id'])), ['id', 'team_id', 'name', 'jersey', 'role', 'verified']),
-  ins('matches', matches, ['id', 'sport_id', 'category', 'stage', 'group_name', 'match_no', 'title', 'team_a_id', 'team_b_id', 'team_a_label', 'team_b_label', 'starts_at', 'venue_id', 'court_id', 'status', 'score_a', 'score_b', 'detail', 'winner', 'status_text']),
+  ins('matches', matches, ['id', 'sport_id', 'category', 'stage', 'group_name', 'match_no', 'title', 'team_a_id', 'team_b_id', 'team_a_label', 'team_b_label', 'starts_at', 'venue_id', 'court_id', 'status', 'score_a', 'score_b', 'detail', 'winner', 'status_text', 'result_note']),
   ins('announcements', d.announcements.map((a) => ({ ...a, id: uuid(a.id) })), ['id', 'message', 'level', 'active']),
   `-- ------------------------------------------------------------------
 -- To REMOVE all sample data before the fest, run these lines:
@@ -51,3 +52,19 @@ const out = [
 ];
 writeFileSync(new URL('../supabase/seed_demo.sql', import.meta.url), out.join('\n'));
 console.log('seed written:', d.colleges.length, 'colleges', d.teams.length, 'teams', d.players.length, 'players', matches.length, 'matches');
+
+// ---- sports seed inside schema.sql (between the BEGIN/END markers) ----
+const arr = (a) => `'{${a.map((x) => (typeof x === 'number' ? x : '"' + String(x).replace(/"/g, '\\"') + '"')).join(',')}}'`;
+const rows = SPORTS.map((s) => `  (${[q(s.id), q(s.name), q(s.scoring), s.periods, q(s.period_label), arr(s.increments), s.win_points, s.draw_points, s.loss_points, s.qualify_per_group, arr(s.categories), s.sort_order, q(s.rules)].join(', ')})`);
+const seed = `insert into public.sports (id, name, scoring, periods, period_label, increments, win_points, draw_points, loss_points, qualify_per_group, categories, sort_order, rules) values
+${rows.join(',\n')}
+on conflict (id) do update set
+  name = excluded.name, scoring = excluded.scoring, periods = excluded.periods, period_label = excluded.period_label,
+  increments = excluded.increments, win_points = excluded.win_points, draw_points = excluded.draw_points,
+  loss_points = excluded.loss_points, qualify_per_group = excluded.qualify_per_group,
+  categories = excluded.categories, sort_order = excluded.sort_order, rules = excluded.rules;`;
+const schemaUrl = new URL('../supabase/schema.sql', import.meta.url);
+const schema = readFileSync(schemaUrl, 'utf8');
+const updated = schema.replace(/-- BEGIN SPORTS SEED[\s\S]*?-- END SPORTS SEED/, `-- BEGIN SPORTS SEED\n${seed}\n-- END SPORTS SEED`);
+writeFileSync(schemaUrl, updated);
+console.log('sports seed written into schema.sql:', SPORTS.length, 'sports');

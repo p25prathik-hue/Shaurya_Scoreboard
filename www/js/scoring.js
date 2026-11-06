@@ -26,10 +26,51 @@ export const STAGES = [
   ['semifinal', 'Semi-final'], ['third_place', '3rd place'], ['final', 'Final'], ['event', 'Event (ranking)'],
 ];
 
+// ------------------------------------------------------------------
+// Rulebook helpers (rules come from sports-config.js, merged in the store)
+// ------------------------------------------------------------------
+const KNOCKOUT = ['quarterfinal', 'semifinal', 'final', 'third_place'];
+export const isKnockout = (m) => !!m && KNOCKOUT.includes(m.stage);
+
+export function catRules(sport, category) {
+  const c = sport?.rules?.cat || {};
+  return { ...(c['*'] || {}), ...(c[category] || {}) };
+}
+export function formatNote(sport, category) { return catRules(sport, category).format || ''; }
+export function tieNote(sport, category) { return catRules(sport, category).tie_note || sport?.rules?.tie_note || ''; }
+export function squadLimits(sport, category) { return catRules(sport, category).squad || null; }
+
+// Can this particular match finish level?
+export function canDraw(sport, m) {
+  if (!sport || sport.scoring === 'ranking') return false;
+  if (isKnockout(m)) return false;
+  return allowsDraw(sport);
+}
+export function hasShootout(sport, m) {
+  return sport?.scoring === 'goals' && sport.rules?.tie === 'shootout' && !canDraw(sport, m);
+}
+export function extraTimeAllowed(sport, m) {
+  const et = sport?.rules?.et;
+  return et === 'always' || (et === 'knockout' && isKnockout(m));
+}
+export function bestOf(sport, m) {
+  const c = catRules(sport, m?.category);
+  if (c.rubbers?.length) return c.rubbers.length;
+  if (m?.stage === 'final' && c.final_best_of) return c.final_best_of;
+  return c.best_of || sport?.periods || 3;
+}
+export function rubberName(sport, m, i) {
+  return catRules(sport, m?.category).rubbers?.[i] || null;
+}
+const ABBR = { Singles: 'S', Doubles: 'D', "Men's singles": 'MS', "Women's singles": 'WS', 'Mixed doubles': 'XD' };
+export const rubberAbbr = (name) => ABBR[name] || (name ? name[0] : '');
+
 export function periodName(sport, n) {
   const label = sport?.period_label || 'Period';
   const max = sport?.periods || 1;
   if (n > max && sport?.scoring !== 'sets') {
+    if (label === 'Turn') return n - max === 1 ? 'Super inning' : `Super inning ${n - max}`;
+    if (sport?.scoring === 'goals') return `Extra time ${n - max}`;
     return label === 'Quarter' || label === 'Half' ? `OT ${n - max}` : `${label} ${n}`;
   }
   switch (label) {
@@ -45,13 +86,17 @@ export function periodName(sport, n) {
 export function periodShort(sport, n) {
   const label = sport?.period_label || 'P';
   const max = sport?.periods || 1;
-  if (n > max && sport?.scoring !== 'sets') return 'OT' + (n - max > 1 ? n - max : '');
+  if (n > max && sport?.scoring !== 'sets') {
+    if (label === 'Turn') return 'SI';
+    return (sport?.scoring === 'goals' ? 'ET' : 'OT') + (n - max);
+  }
   if (label === 'Quarter') return 'Q' + n;
   if (label === 'Half') return 'H' + n;
   return label[0] + n;
 }
 
 export function tiebreakName(sport) {
+  if (sport?.rules?.tiebreak?.[0] === 'for') return 'total game points';
   switch (sport?.scoring) {
     case 'goals': return 'goal difference';
     case 'sets': return `${(sport.period_label || 'set').toLowerCase()} difference`;
@@ -60,8 +105,10 @@ export function tiebreakName(sport) {
   }
 }
 
+// Can a group-stage game end level? (rulebook `draws`, else a sensible default)
 export function allowsDraw(sport) {
   if (!sport) return false;
+  if (typeof sport.rules?.draws === 'boolean') return sport.rules.draws;
   if (sport.scoring === 'goals') return true;
   return (sport.increments || []).some((x) => Number(x) % 1 !== 0); // e.g. chess half points
 }
@@ -75,14 +122,15 @@ export function initialDetail(sport, opts = {}) {
     case 'points':
     case 'goals': return { period: 1, periods: [[0, 0]] };
     case 'sets': return { current: 0, sets: [[0, 0]] };
-    case 'cricket': return { overs: opts.overs || defaultOvers(sport), current: 0, innings: [] };
+    case 'cricket': return { overs: opts.overs || defaultOvers(sport, opts.category), current: 0, innings: [] };
     case 'ranking': return { results: [] };
     default: return {};
   }
 }
 
-export function defaultOvers(sport) {
-  return sport.id === 'boxcricket' ? 6 : 15;
+export function defaultOvers(sport, category) {
+  const c = catRules(sport, category || sport?.categories?.[0]);
+  return c.overs || (sport.id === 'boxcricket' ? 8 : 15);
 }
 
 function sumPeriods(periods) {
@@ -108,6 +156,7 @@ export function ballsToOvers(balls) {
 function cricketTotals(detail) {
   const t = { a: null, b: null };
   (detail.innings || []).forEach((inn) => {
+    if (inn.super) return; // Super Over runs don't count towards the match score
     const cur = t[inn.bat] || { runs: 0, wkts: 0, balls: 0 };
     t[inn.bat] = { runs: cur.runs + inn.runs, wkts: inn.wkts, balls: cur.balls + inn.balls };
   });
@@ -120,7 +169,7 @@ export function patchFromDetail(sport, match, detail, extra = {}) {
   if (sport.scoring === 'points' || sport.scoring === 'goals') {
     const [a, b] = sumPeriods(detail.periods);
     p.score_a = a; p.score_b = b;
-    p.status_text = periodName(sport, detail.period || 1);
+    p.status_text = detail.pens ? `Penalties ${detail.pens[0]}–${detail.pens[1]}` : periodName(sport, detail.period || 1);
   } else if (sport.scoring === 'sets') {
     const [a, b] = setsWon(detail, p.status === 'completed');
     p.score_a = a; p.score_b = b;
@@ -129,7 +178,7 @@ export function patchFromDetail(sport, match, detail, extra = {}) {
     const t = cricketTotals(detail);
     p.score_a = t.a ? t.a.runs : 0; p.score_b = t.b ? t.b.runs : 0;
     const inn = detail.innings?.[detail.current ?? 0];
-    p.status_text = inn ? `${ballsToOvers(inn.balls)} ov` : 'Toss';
+    p.status_text = inn ? `${inn.super ? 'Super Over · ' : ''}${ballsToOvers(inn.balls)} ov` : 'Toss';
   } else if (sport.scoring === 'ranking') {
     p.score_a = 0; p.score_b = 0;
     const n = (detail.results || []).length;
@@ -146,9 +195,18 @@ export function decideWinner(sport, m) {
   if (sport.scoring === 'ranking') return { winner: null };
   if (sport.scoring === 'cricket') {
     const d = m.detail || {};
-    const inns = d.innings || [];
+    const inns = (d.innings || []).filter((x) => !x.super);
+    const supers = (d.innings || []).filter((x) => x.super);
     const a = Number(m.score_a), b = Number(m.score_b);
-    if (a === b) return { winner: 'draw', result_note: 'Match tied' };
+    if (a === b) {
+      // Settle with the last completed pair of Super Over innings
+      for (let i = supers.length - (supers.length % 2) - 2; i >= 0; i -= 2) {
+        const [s1, s2] = [supers[i], supers[i + 1]];
+        if (s1.runs !== s2.runs) return { winner: s1.runs > s2.runs ? s1.bat : s2.bat, result_note: 'won the Super Over' };
+        break;
+      }
+      return { winner: 'draw', result_note: 'Match tied' };
+    }
     const w = a > b ? 'a' : 'b';
     let note = '';
     if (inns.length >= 2) {
@@ -159,8 +217,48 @@ export function decideWinner(sport, m) {
     return { winner: w, result_note: note || null };
   }
   const a = Number(m.score_a), b = Number(m.score_b);
+  const pens = m.detail?.pens;
+  if (a === b && pens && pens[0] !== pens[1]) {
+    const w = pens[0] > pens[1] ? 'a' : 'b';
+    return { winner: w, result_note: `won ${Math.max(...pens)}–${Math.min(...pens)} on penalties` };
+  }
   if (a === b) return { winner: 'draw' };
   return { winner: a > b ? 'a' : 'b' };
+}
+
+// Is a level score acceptable right now? Returns null when the match can end,
+// or a message telling the scorer how the rulebook settles the tie.
+export function finishBlocker(sport, m) {
+  if (!sport || sport.scoring === 'ranking') return null;
+  const w = decideWinner(sport, m).winner;
+  if (w !== 'draw' || canDraw(sport, m)) return null;
+  switch (sport.scoring) {
+    case 'cricket': return 'Scores are level — play a Super Over (rulebook: a tie goes to a Super Over).';
+    case 'goals':
+      if (m.detail?.pens) return 'The shootout is level — keep going (sudden death).';
+      if (extraTimeAllowed(sport, m) && (m.detail?.period || 1) <= sport.periods) return 'Level at full time — play extra time, then penalties.';
+      return 'Level — settle it with a penalty shootout.';
+    case 'sets': return `Level — play the deciding ${(sport.period_label || 'set').toLowerCase()}.`;
+    default:
+      if (sport.rules?.tie === 'super_inning') return 'Tied — start the super inning (rulebook: 3 minutes each to run and chase).';
+      if (sport.rules?.tie === 'golden_point') return 'Tied — play the golden point: next score wins.';
+      return 'Scores are level — start overtime and keep playing until there is a winner.';
+  }
+}
+
+// --- penalty shootout ---
+export function startShootout(sport, match) {
+  const d = clone(match.detail);
+  d.pens = [0, 0];
+  return patchFromDetail(sport, match, d);
+}
+export function addPen(sport, match, side, scored) {
+  const d = clone(match.detail);
+  d.pens = d.pens || [0, 0];
+  d.pen_log = d.pen_log || [];
+  d.pen_log.push({ side, scored: !!scored });
+  if (scored) d.pens[side === 'a' ? 0 : 1]++;
+  return patchFromDetail(sport, match, d);
 }
 
 // --- points / goals ---
@@ -200,16 +298,18 @@ export function endSet(sport, match) {
   d.sets.push([0, 0]);
   return patchFromDetail(sport, match, d);
 }
-export function setsNeeded(sport) {
-  return Math.floor((sport.periods || 3) / 2) + 1;
+export function setsNeeded(sport, m) {
+  return Math.floor(bestOf(sport, m) / 2) + 1;
 }
 
 // --- cricket ---
-export function startInnings(sport, match, batSide, overs) {
+export function startInnings(sport, match, batSide, overs, opts = {}) {
   const d = clone(match.detail);
-  if (!d.innings) Object.assign(d, initialDetail(sport, { overs }));
-  if (overs) d.overs = overs;
-  d.innings.push({ bat: batSide, runs: 0, wkts: 0, balls: 0, extras: 0 });
+  if (!d.innings) Object.assign(d, initialDetail(sport, { overs, category: match.category }));
+  if (overs && !opts.super) d.overs = overs;
+  const inn = { bat: batSide, runs: 0, wkts: 0, balls: 0, extras: 0 };
+  if (opts.super) Object.assign(inn, { super: true, overs: 1 });
+  d.innings.push(inn);
   d.current = d.innings.length - 1;
   return patchFromDetail(sport, match, d);
 }
@@ -228,13 +328,24 @@ export function cricketInfo(match, sport) {
   const d = match.detail || {};
   const inns = d.innings || [];
   const cur = inns[d.current ?? 0];
-  const info = { overs: d.overs, innings: inns, current: cur, target: null, need: null };
-  if (inns.length >= 2 && cur === inns[inns.length - 1]) {
-    const first = inns[0];
+  const mains = inns.filter((x) => !x.super);
+  const supers = inns.filter((x) => x.super);
+  const info = { overs: cur?.super ? 1 : d.overs, innings: inns, mains, supers, current: cur, target: null, need: null, isSuper: !!cur?.super };
+  let first = null;
+  if (cur && !cur.super && mains.length >= 2 && cur === mains[1]) first = mains[0];
+  if (cur && cur.super) {
+    const k = supers.indexOf(cur);
+    if (k % 2 === 1) first = supers[k - 1];
+  }
+  if (first) {
     info.target = first.runs + 1;
-    const ballsLeft = (d.overs || 0) * 6 - cur.balls;
+    const ballsLeft = (cur.super ? 6 : (d.overs || 0) * 6) - cur.balls;
     info.need = { runs: Math.max(0, info.target - cur.runs), balls: Math.max(0, ballsLeft) };
   }
+  // A Super Over is needed once both main innings are done and level
+  info.mainsLevel = mains.length >= 2 && mains[0].runs === mains[1].runs;
+  info.superPairDone = supers.length > 0 && supers.length % 2 === 0;
+  info.superLevel = info.superPairDone && supers[supers.length - 2].runs === supers[supers.length - 1].runs;
   if (cur && cur.balls > 0) info.rr = ((cur.runs / cur.balls) * 6).toFixed(2);
   return info;
 }
@@ -254,7 +365,8 @@ export function scoreLine(m, sport) {
     const inn = (m.detail?.innings || [])[m.detail?.current ?? 0];
     const info = cricketInfo(m, sport);
     let note = '';
-    if (m.status === 'live' && info.need && info.need.runs > 0) note = `Need ${info.need.runs} off ${info.need.balls}`;
+    if (m.status === 'live' && info.isSuper) note = 'Super Over' + (info.need ? ` · need ${info.need.runs} off ${info.need.balls}` : '');
+    else if (m.status === 'live' && info.need && info.need.runs > 0) note = `Need ${info.need.runs} off ${info.need.balls}`;
     else if (m.status === 'live' && info.rr) note = `RR ${info.rr}`;
     return { a: f(t.a), b: f(t.b), note, overs: inn ? ballsToOvers(inn.balls) : '' };
   }
@@ -264,11 +376,14 @@ export function scoreLine(m, sport) {
   if (sport.scoring === 'sets') {
     const won = m.status === 'completed' ? [m.score_a, m.score_b] : setsWon(m.detail || {}, false);
     const d = m.detail || {};
-    const cur = d.sets?.[d.current ?? 0];
-    const note = m.status === 'live' && cur ? `${sport.period_label} ${(d.current ?? 0) + 1}: ${fmtNum(cur[0])}–${fmtNum(cur[1])}` : '';
+    const i = d.current ?? 0;
+    const cur = d.sets?.[i];
+    const rn = rubberName(sport, m, i);
+    const note = m.status === 'live' && cur && i < bestOf(sport, m) ? `${sport.period_label} ${i + 1}${rn ? ' (' + rn + ')' : ''}: ${fmtNum(cur[0])}–${fmtNum(cur[1])}` : '';
     return { a: fmtNum(won[0]), b: fmtNum(won[1]), note };
   }
-  return { a: fmtNum(m.score_a), b: fmtNum(m.score_b), note: '' };
+  const pens = m.detail?.pens;
+  return { a: fmtNum(m.score_a), b: fmtNum(m.score_b), note: pens ? `Pens ${pens[0]}–${pens[1]}` : '' };
 }
 
 // Per-period / per-set breakdown table
@@ -280,14 +395,24 @@ export function breakdown(m, sport) {
     if (!periods.length || (sport.periods <= 1 && periods.length <= 1)) return null;
     const n = Math.max(periods.length, sport.periods);
     const cols = [];
-    for (let i = 0; i < n; i++) cols.push({ label: periodShort(sport, i + 1), a: periods[i]?.[0], b: periods[i]?.[1], current: m.status === 'live' && i === (d.period || 1) - 1 });
+    for (let i = 0; i < n; i++) cols.push({ label: periodShort(sport, i + 1), a: periods[i]?.[0], b: periods[i]?.[1], current: m.status === 'live' && !d.pens && i === (d.period || 1) - 1 });
+    if (d.pens) cols.push({ label: 'Pens', a: d.pens[0], b: d.pens[1], current: m.status === 'live' });
     return { cols, totalA: fmtNum(m.score_a), totalB: fmtNum(m.score_b), totalLabel: 'T' };
   }
   if (sport.scoring === 'sets') {
     const sets = d.sets || [];
-    const shown = sets.filter((s, i) => i < (d.current ?? 0) || (m.status === 'live' && i === (d.current ?? 0)) || (s[0] + s[1] > 0));
-    if (!shown.length) return null;
-    const cols = shown.map((s, i) => ({ label: periodShort(sport, i + 1), a: s[0], b: s[1], current: m.status === 'live' && i === (d.current ?? 0) }));
+    const rubbers = catRules(sport, m.category).rubbers;
+    const n = bestOf(sport, m);
+    const cur = d.current ?? 0;
+    let cols;
+    if (rubbers?.length) {
+      // Team ties: always show every match in rulebook order (S, D, S…)
+      cols = rubbers.map((r, i) => ({ label: rubberAbbr(r) + (rubbers.filter((x) => x === r).length > 1 ? rubbers.slice(0, i + 1).filter((x) => x === r).length : ''), title: r, a: i < cur || (i === cur && m.status !== 'scheduled') ? sets[i]?.[0] : undefined, b: i < cur || (i === cur && m.status !== 'scheduled') ? sets[i]?.[1] : undefined, current: m.status === 'live' && i === cur }));
+    } else {
+      const shown = sets.filter((s, i) => i < n && (i < cur || (m.status === 'live' && i === cur) || (s[0] + s[1] > 0)));
+      if (!shown.length) return null;
+      cols = shown.map((s, i) => ({ label: periodShort(sport, i + 1), a: s[0], b: s[1], current: m.status === 'live' && i === cur }));
+    }
     return { cols, totalA: fmtNum(m.score_a), totalB: fmtNum(m.score_b), totalLabel: sport.period_label === 'Set' ? 'Sets' : 'Won' };
   }
   return null;
@@ -339,7 +464,15 @@ export function computeTable(teamIds, results, sport, nameOf) {
   });
   const list = [...rows.values()];
   list.forEach((r) => { r.diff = round1(r.sf - r.sa); r.sf = round1(r.sf); r.sa = round1(r.sa); });
-  list.sort((x, y) => y.pts - x.pts || y.diff - x.diff || y.sf - x.sf || String(nameOf(x.id)).localeCompare(String(nameOf(y.id))));
+  const order = sport.rules?.tiebreak || ['diff', 'for'];
+  const tb = (x, y) => {
+    for (const k of order) {
+      const v = k === 'for' ? y.sf - x.sf : y.diff - x.diff;
+      if (v) return v;
+    }
+    return 0;
+  };
+  list.sort((x, y) => y.pts - x.pts || tb(x, y) || String(nameOf(x.id)).localeCompare(String(nameOf(y.id))));
   return list;
 }
 
@@ -478,8 +611,7 @@ export function nextRoundName(matches, sportId, category) {
   const ko = matches.filter((m) => m.sport_id === sportId && m.category === category);
   if (ko.some((m) => m.stage === 'quarterfinal')) return 'quarter-finals';
   if (ko.some((m) => m.stage === 'semifinal')) return 'semi-finals';
-  if (ko.some((m) => m.stage === 'final')) return 'final';
-  return 'knockouts';
+  return 'final'; // rulebook: group stages followed by a final
 }
 
 // ------------------------------------------------------------------

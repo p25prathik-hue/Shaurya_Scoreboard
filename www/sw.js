@@ -1,11 +1,11 @@
 // Shaurya Live service worker: makes the app installable and opens instantly.
 // App files: network first (so updates arrive immediately), cache as fallback.
 // Fonts / CDN library: cache first. Supabase API calls are never cached.
-const CACHE = 'shaurya-v1';
+const CACHE = 'shaurya-v2';
 const SHELL = [
   './', './index.html', './config.js', './css/app.css', './manifest.webmanifest',
   './js/app.js', './js/store.js', './js/util.js', './js/ui.js', './js/components.js',
-  './js/scoring.js', './js/views-fan.js', './js/views-org.js', './js/demo-data.js',
+  './js/scoring.js', './js/views-fan.js', './js/views-org.js', './js/demo-data.js', './js/sports-config.js',
   './icons/icon-192.png', './icons/icon-512.png',
 ];
 

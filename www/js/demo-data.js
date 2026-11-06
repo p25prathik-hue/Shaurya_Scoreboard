@@ -1,33 +1,9 @@
 // Sample data for DEMO MODE (no Supabase configured). Also used to generate
 // supabase/seed_demo.sql. Everything here is illustrative.
 
-export const SPORTS = [
-  ['cricket', 'Cricket', 'cricket', 2, 'Innings', [1], 2, 1, 0, 2, ['Men']],
-  ['boxcricket', 'Box Cricket', 'cricket', 2, 'Innings', [1], 2, 1, 0, 2, ['Women']],
-  ['football', 'Football', 'goals', 2, 'Half', [1], 3, 1, 0, 2, ['Men']],
-  ['futsal', 'Futsal', 'goals', 2, 'Half', [1], 3, 1, 0, 2, ['Women']],
-  ['basketball', 'Basketball', 'points', 4, 'Quarter', [1, 2, 3], 2, 1, 0, 2, ['Men', 'Women']],
-  ['volleyball', 'Volleyball', 'sets', 3, 'Set', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['hockey', 'Hockey', 'goals', 2, 'Half', [1], 3, 1, 0, 2, ['Men']],
-  ['kabaddi', 'Kabaddi', 'points', 2, 'Half', [1, 2, 3], 2, 1, 0, 2, ['Men', 'Women']],
-  ['khokho', 'Kho-Kho', 'points', 4, 'Turn', [1], 2, 1, 0, 2, ['Mixed']],
-  ['throwball', 'Throwball', 'sets', 3, 'Set', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['frisbee', 'Ultimate Frisbee', 'points', 1, 'Game', [1], 2, 1, 0, 2, ['Mixed']],
-  ['badminton', 'Badminton', 'sets', 5, 'Rubber', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['tabletennis', 'Table Tennis', 'sets', 5, 'Rubber', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['tennis', 'Lawn Tennis', 'sets', 3, 'Rubber', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['squash', 'Squash', 'sets', 5, 'Rubber', [1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['athletics', 'Athletics', 'ranking', 1, 'Event', [1], 0, 0, 0, 0, ['Mixed']],
-  ['swimming', 'Swimming', 'ranking', 1, 'Event', [1], 0, 0, 0, 0, ['Mixed']],
-  ['powerlifting', 'Powerlifting', 'ranking', 1, 'Event', [1], 0, 0, 0, 0, ['Men', 'Women']],
-  ['chess', 'Chess', 'points', 1, 'Round', [0.5, 1], 2, 1, 0, 2, ['Men', 'Women']],
-  ['carrom', 'Carrom', 'sets', 5, 'Rubber', [1], 2, 1, 0, 2, ['Mixed']],
-  ['snooker', 'Snooker', 'sets', 3, 'Rubber', [1], 2, 1, 0, 2, ['Mixed']],
-  ['fifa', 'FIFA', 'sets', 5, 'Match', [1], 2, 1, 0, 2, ['Mixed']],
-  ['valorant', 'Valorant', 'sets', 3, 'Map', [1], 2, 1, 0, 2, ['Mixed']],
-].map(([id, name, scoring, periods, period_label, increments, win_points, draw_points, loss_points, qualify_per_group, categories], i) => ({
-  id, name, scoring, periods, period_label, increments, win_points, draw_points, loss_points, qualify_per_group, categories, sort_order: i + 1,
-}));
+import { SPORTS } from './sports-config.js';
+
+export { SPORTS };
 
 const COLLEGES = [
   ['c-iima', 'IIM Ahmedabad', 'IIMA', 'Ahmedabad'],
@@ -140,7 +116,7 @@ export function buildDemo(festDays) {
   match({ sport_id: 'football', category: 'Men', group_name: 'A', team_a_id: fA[1], team_b_id: fA[2], starts_at: at(d1, '08:00'), venue_id: 'v-football', court_id: 'k-field', status: 'completed', score_a: 2, score_b: 0, detail: { period: 2, periods: [[1, 0], [1, 0]] }, winner: 'a', status_text: 'Final' });
   match({ sport_id: 'football', category: 'Men', group_name: 'A', team_a_id: fA[0], team_b_id: fA[1], starts_at: at(d2, '14:30'), venue_id: 'v-football', court_id: 'k-field' });
   match({ sport_id: 'football', category: 'Men', group_name: 'A', team_a_id: fA[0], team_b_id: fA[2], starts_at: at(d3, '08:00'), venue_id: 'v-football', court_id: 'k-field' });
-  match({ sport_id: 'football', category: 'Men', group_name: 'B', team_a_id: fB[0], team_b_id: fB[1], starts_at: at(d1, '10:00'), venue_id: 'v-football', court_id: 'k-field', status: 'completed', score_a: 1, score_b: 1, detail: { period: 2, periods: [[0, 1], [1, 0]] }, winner: 'draw', status_text: 'Final' });
+  match({ sport_id: 'football', category: 'Men', group_name: 'B', team_a_id: fB[0], team_b_id: fB[1], starts_at: at(d1, '10:00'), venue_id: 'v-football', court_id: 'k-field', status: 'completed', score_a: 1, score_b: 1, detail: { period: 2, periods: [[0, 1], [1, 0]], pens: [4, 3] }, winner: 'a', result_note: 'won 4–3 on penalties', status_text: 'Final' });
   match({ sport_id: 'football', category: 'Men', group_name: 'B', team_a_id: fB[1], team_b_id: fB[2], starts_at: at(d2, '08:00'), venue_id: 'v-football', court_id: 'k-field', status: 'completed', score_a: 3, score_b: 1, detail: { period: 2, periods: [[2, 0], [1, 1]] }, winner: 'a', status_text: 'Final' });
   match({ sport_id: 'football', category: 'Men', group_name: 'B', team_a_id: fB[0], team_b_id: fB[2], starts_at: at(d2, '16:30'), venue_id: 'v-football', court_id: 'k-field' });
 
@@ -163,14 +139,14 @@ export function buildDemo(festDays) {
   match({ sport_id: 'chess', category: 'Men', group_name: 'A', team_a_id: ch[1], team_b_id: ch[3], starts_at: at(d2, '15:00'), venue_id: 'v-mind', court_id: 'k-hall' });
 
   // ---- Finished finals / ranking events (medal tally) ----
-  match({ sport_id: 'carrom', category: 'Mixed', stage: 'final', team_a_id: ca[0], team_b_id: ca[1], starts_at: at(d1, '18:00'), venue_id: 'v-mind', court_id: 'k-hall', status: 'completed', score_a: 3, score_b: 1, detail: { current: 4, sets: [[1, 0], [0, 1], [1, 0], [1, 0], [0, 0]] }, winner: 'a', status_text: 'Final' });
-  match({ sport_id: 'swimming', category: 'Mixed', stage: 'event', title: '50 m freestyle final', starts_at: at(d1, '08:30'), venue_id: 'v-pool', court_id: 'k-lanes', status: 'completed', detail: { results: [
+  match({ sport_id: 'carrom', category: 'Mixed', stage: 'final', team_a_id: ca[0], team_b_id: ca[1], starts_at: at(d1, '18:00'), venue_id: 'v-mind', court_id: 'k-hall', status: 'completed', score_a: 3, score_b: 2, detail: { current: 5, sets: [[16, 9], [11, 16], [16, 12], [16, 7], [9, 14]] }, winner: 'a', status_text: 'Final' });
+  match({ sport_id: 'swimming', category: 'Mixed', stage: 'event', title: '50 m freestyle — Men', starts_at: at(d1, '08:30'), venue_id: 'v-pool', court_id: 'k-lanes', status: 'completed', detail: { results: [
     { team_id: sw[1], athlete: 'Riya T.', mark: '31.42 s', position: 1 },
     { team_id: sw[0], athlete: 'Kabir M.', mark: '31.88 s', position: 2 },
     { team_id: sw[3], athlete: 'Sana P.', mark: '32.10 s', position: 3 },
     { team_id: sw[2], athlete: 'Arnav J.', mark: '33.05 s', position: 4 },
   ] }, status_text: 'Final' });
-  match({ sport_id: 'powerlifting', category: 'Men', stage: 'event', title: '74 kg class', starts_at: at(d2, '10:00'), venue_id: 'v-indoor', court_id: 'k-in2', status: 'completed', detail: { results: [
+  match({ sport_id: 'powerlifting', category: 'Men', stage: 'event', title: '66–74 kg', starts_at: at(d2, '10:00'), venue_id: 'v-indoor', court_id: 'k-in2', status: 'completed', detail: { results: [
     { team_id: pl[1], athlete: 'Dev K.', mark: '512.5 kg total', position: 1 },
     { team_id: pl[0], athlete: 'Varun B.', mark: '497.5 kg total', position: 2 },
     { team_id: pl[2], athlete: 'Parth G.', mark: '480 kg total', position: 3 },

@@ -39,13 +39,33 @@ Until Supabase is connected (step 2 below), the app runs in **demo mode** with s
   - points and qualifier rules for each sport
   - announcements shown on everyone's home screen
 
+### Shaurya 2026 rulebook built in
+Every sport's rules from the 2026 rulebook live in [`www/js/sports-config.js`](www/js/sports-config.js). The database seed in `schema.sql` is generated from that same file by `node scripts/make_seed.mjs`. The rules cover:
+- **Formats and squad sizes for each category.** Fans see them on every match page and on **Standings → Rules**. Rosters warn when a squad is outside the limits.
+- **Draws and tie-breaks:**
+  - Football and futsal never end level: penalties in groups; extra time then penalties in futsal and in football knockouts.
+  - Hockey knockouts go to a shootout.
+  - Basketball plays overtime; kho-kho plays a super inning; frisbee plays a golden point.
+  - Cricket and box cricket go to a Super Over.
+  - The scoring pad won't publish an illegal draw.
+- **Team ties:**
+  - Badminton: 5 matches (men) / 3 (women).
+  - TT, tennis, squash, carrom, snooker and FIFA each show their singles/doubles order.
+  - Badminton, squash, carrom and snooker play every match even after the tie is decided.
+- **Best-of rules:** volleyball men's final is best of 5. Cricket is 15 overs; box cricket is 8 overs.
+- **Chess standings:** match points (2/1/0), then total game points.
+- **Ranking events:** one click creates every athletics, swimming and powerlifting event from the rulebook (Organise → Fixtures).
+- **Grace period:** after 15 minutes a late match raises an alert, and the scoring pad can award a walkover.
+
+To change a rule, edit it in the app under **Organise → Sports settings → Rulebook settings**, or edit `sports-config.js` and re-run the seed script.
+
 ---
 
 ## Setup (one time, about 20 minutes)
 
 ### 1. Create the database
 1. Open your Supabase project, then **SQL Editor → New query**.
-2. Paste in all of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. This creates the tables, security rules, scoring functions, realtime and the 23 sports.
+2. Paste in all of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. This creates the tables, security rules, scoring functions, realtime and the 23 sports with their 2026 rulebook settings. Re-running it later is safe: it updates the sports to the latest rulebook settings without touching teams, fixtures or scores.
 3. *Optional:* also run [`supabase/seed_demo.sql`](supabase/seed_demo.sql) to load sample colleges and matches for testing. The file ends with DELETE lines that remove it all again before the fest.
 
 ### 2. Connect the app

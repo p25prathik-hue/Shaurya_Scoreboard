@@ -15,6 +15,7 @@ const routes = [
   [/^\/team\/([^/]+)$/, fan.team],
   [/^\/login$/, fan.login],
   [/^\/me$/, fan.me],
+  [/^\/formats$/, fan.formats],
   [/^\/org$/, org.desk],
   [/^\/org\/score\/([^/]+)$/, org.score],
   [/^\/org\/fixtures$/, org.fixtures],

@@ -48,8 +48,10 @@ create table if not exists public.sports (
   loss_points   numeric not null default 0,
   qualify_per_group int not null default 2,        -- teams per group that reach knockouts
   categories    text[] not null default '{Men}',
-  sort_order    int  not null default 0
+  sort_order    int  not null default 0,
+  rules         jsonb not null default '{}'::jsonb      -- rulebook: formats, squads, tie rules, team-tie order
 );
+alter table public.sports add column if not exists rules jsonb not null default '{}'::jsonb;
 
 create table if not exists public.scorer_sports (
   user_id   uuid not null references public.profiles (id) on delete cascade,
@@ -497,33 +499,40 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- 7. Sports seed (the 33 Shaurya'26 events across 23 sports)
+-- 7. Sports seed — Shaurya 2026 rulebook (generated from www/js/sports-config.js
+--    by scripts/make_seed.mjs; re-running this file resets these 23 sports)
 -- ---------------------------------------------------------------------
-insert into public.sports (id, name, scoring, periods, period_label, increments, win_points, draw_points, loss_points, qualify_per_group, categories, sort_order) values
-  ('cricket',      'Cricket',          'cricket', 2, 'Innings', '{1}',     2, 1, 0, 2, '{Men}',            1),
-  ('boxcricket',   'Box Cricket',      'cricket', 2, 'Innings', '{1}',     2, 1, 0, 2, '{Women}',          2),
-  ('football',     'Football',         'goals',   2, 'Half',    '{1}',     3, 1, 0, 2, '{Men}',            3),
-  ('futsal',       'Futsal',           'goals',   2, 'Half',    '{1}',     3, 1, 0, 2, '{Women}',          4),
-  ('basketball',   'Basketball',       'points',  4, 'Quarter', '{1,2,3}', 2, 1, 0, 2, '{Men,Women}',      5),
-  ('volleyball',   'Volleyball',       'sets',    3, 'Set',     '{1}',     2, 1, 0, 2, '{Men,Women}',      6),
-  ('hockey',       'Hockey',           'goals',   2, 'Half',    '{1}',     3, 1, 0, 2, '{Men}',            7),
-  ('kabaddi',      'Kabaddi',          'points',  2, 'Half',    '{1,2,3}', 2, 1, 0, 2, '{Men,Women}',      8),
-  ('khokho',       'Kho-Kho',          'points',  4, 'Turn',    '{1}',     2, 1, 0, 2, '{Mixed}',          9),
-  ('throwball',    'Throwball',        'sets',    3, 'Set',     '{1}',     2, 1, 0, 2, '{Men,Women}',     10),
-  ('frisbee',      'Ultimate Frisbee', 'points',  1, 'Game',    '{1}',     2, 1, 0, 2, '{Mixed}',         11),
-  ('badminton',    'Badminton',        'sets',    5, 'Rubber',  '{1}',     2, 1, 0, 2, '{Men,Women}',     12),
-  ('tabletennis',  'Table Tennis',     'sets',    5, 'Rubber',  '{1}',     2, 1, 0, 2, '{Men,Women}',     13),
-  ('tennis',       'Lawn Tennis',      'sets',    3, 'Rubber',  '{1}',     2, 1, 0, 2, '{Men,Women}',     14),
-  ('squash',       'Squash',           'sets',    5, 'Rubber',  '{1}',     2, 1, 0, 2, '{Men,Women}',     15),
-  ('athletics',    'Athletics',        'ranking', 1, 'Event',   '{1}',     0, 0, 0, 0, '{Mixed}',         16),
-  ('swimming',     'Swimming',         'ranking', 1, 'Event',   '{1}',     0, 0, 0, 0, '{Mixed}',         17),
-  ('powerlifting', 'Powerlifting',     'ranking', 1, 'Event',   '{1}',     0, 0, 0, 0, '{Men,Women}',     18),
-  ('chess',        'Chess',            'points',  1, 'Round',   '{0.5,1}', 2, 1, 0, 2, '{Men,Women}',     19),
-  ('carrom',       'Carrom',           'sets',    5, 'Rubber',  '{1}',     2, 1, 0, 2, '{Mixed}',         20),
-  ('snooker',      'Snooker',          'sets',    3, 'Rubber',  '{1}',     2, 1, 0, 2, '{Mixed}',         21),
-  ('fifa',         'FIFA',             'sets',    5, 'Match',   '{1}',     2, 1, 0, 2, '{Mixed}',         22),
-  ('valorant',     'Valorant',         'sets',    3, 'Map',     '{1}',     2, 1, 0, 2, '{Mixed}',         23)
-on conflict (id) do nothing;
+-- BEGIN SPORTS SEED
+insert into public.sports (id, name, scoring, periods, period_label, increments, win_points, draw_points, loss_points, qualify_per_group, categories, sort_order, rules) values
+  ('cricket', 'Cricket', 'cricket', 2, 'Innings', '{1}', 2, 1, 0, 2, '{"Men"}', 1, '{"draws":false,"tie":"super_over","tie_note":"A tie goes to a Super Over: the side batting second bats first, 3 batters and 1 bowler each, 2 wickets ends it. Repeat until there is a winner.","cat":{"Men":{"overs":15,"squad":[11,15],"format":"15 overs a side (ICC T20 rules, white ball). Max 3 overs per bowler, 3-over powerplay, 2 bouncers an over, free hit after every no-ball."}}}'::jsonb),
+  ('boxcricket', 'Box Cricket', 'cricket', 2, 'Innings', '{1}', 2, 1, 0, 2, '{"Women"}', 2, '{"draws":true,"tie":"super_over","cat":{"Women":{"overs":8,"squad":[8,10],"format":"One-off 8-over match, 8 players a side, hard tennis ball inside a marked box. Two bowlers may bowl 2 overs; everyone else 1 over."}}}'::jsonb),
+  ('football', 'Football', 'goals', 2, 'Half', '{1}', 3, 1, 0, 2, '{"Men"}', 3, '{"draws":false,"tie":"shootout","et":"knockout","tie_note":"No draws. Level at full time: straight to penalties before the semis; semis and final play extra time (2 × 10 min) then penalties. Sudden death after 5 kicks each.","cat":{"Men":{"squad":[11,18],"format":"11-a-side, 2 × 30 min. Up to 5 substitutions in 3 windows. FIFA laws."}}}'::jsonb),
+  ('futsal', 'Futsal', 'goals', 2, 'Half', '{1}', 3, 1, 0, 2, '{"Women"}', 4, '{"draws":false,"tie":"shootout","et":"always","tie_note":"No draws. Extra time of 2 × 5 min, then 5 penalties each — 1v1 from the centre spot with 20 seconds to score (MLS-style).","cat":{"Women":{"squad":[5,10],"format":"5-a-side (4 + goalkeeper), 2 × 15 min with a 7-min break. Rolling substitutions, no offside."}}}'::jsonb),
+  ('basketball', 'Basketball', 'points', 4, 'Quarter', '{1,2,3}', 2, 1, 0, 2, '{"Men","Women"}', 5, '{"draws":false,"tie":"overtime","cat":{"Men":{"squad":[5,12],"format":"4 × 10-min quarters (clock stops when the ball is dead), 10-min half-time. FIBA rules, size-7 ball.","tie_note":"Level after Q4: 5-minute overtime periods until there is a winner."},"Women":{"squad":[5,12],"format":"4 × 8-min quarters (clock stops when the ball is dead), 10-min half-time. FIBA rules, size-6 ball.","tie_note":"Level after Q4: 3-minute overtime periods until there is a winner."}}}'::jsonb),
+  ('volleyball', 'Volleyball', 'sets', 3, 'Set', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 6, '{"draws":false,"tie":"decider","cat":{"Men":{"squad":[6,12],"best_of":3,"final_best_of":5,"format":"Best of 3 sets to 25. Final: best of 5 (5th set to 15). 3rd-place match: best of 3. FIVB rules, up to 2 liberos."},"Women":{"squad":[6,12],"best_of":3,"format":"Best of 3: sets 1–2 to 25, set 3 to 15. Final and 3rd-place match: 3 sets to 25."}}}'::jsonb),
+  ('hockey', 'Hockey', 'goals', 2, 'Half', '{1}', 3, 1, 0, 2, '{"Men"}', 7, '{"draws":true,"tie":"shootout","tie_note":"Group games can be drawn. Knockouts level at full time go straight to a shootout from the midline against one defender (5 takers, then sudden death).","cat":{"Men":{"squad":[6,12],"format":"6-a-side, 2 × 20 min, unlimited substitutions. Push and reverse push only — no hits, cracks or scoops; no designated goalkeeper."}}}'::jsonb),
+  ('kabaddi', 'Kabaddi', 'points', 2, 'Half', '{1,2,3}', 2, 1, 0, 2, '{"Men","Women"}', 8, '{"draws":true,"cat":{"Men":{"squad":[7,12],"format":"7 a side + 5 subs, 2 × 20 min, 5 substitutions per half. All-out = 2 extra points. Weight limit 85 kg."},"Women":{"squad":[7,12],"format":"7 a side + 5 subs, 2 × 20 min, 5 substitutions per half. All-out = 2 extra points. Weight limit 75 kg."}}}'::jsonb),
+  ('khokho', 'Kho-Kho', 'points', 4, 'Turn', '{1}', 2, 1, 0, 2, '{"Mixed"}', 9, '{"draws":false,"tie":"super_inning","tie_note":"A tie goes to a super inning: each team gets 3 minutes to run and 3 to chase.","cat":{"Mixed":{"squad":[9,15],"format":"2 innings of 2 turns, 7 minutes each. 9 players (at least 2 women), up to 6 substitutes."}}}'::jsonb),
+  ('throwball', 'Throwball', 'sets', 3, 'Set', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 10, '{"draws":false,"tie":"decider","cat":{"Men":{"squad":[7,12],"best_of":3,"format":"Best of 3 sets to 25. 7 a side in a 2-3-2 formation, up to 5 substitutes."},"Women":{"squad":[7,12],"best_of":3,"format":"Best of 3 sets to 25. 7 a side in a 2-3-2 formation, up to 5 substitutes."}}}'::jsonb),
+  ('frisbee', 'Ultimate Frisbee', 'points', 2, 'Half', '{1}', 2, 1, 0, 2, '{"Mixed"}', 11, '{"draws":false,"tie":"golden_point","tie_note":"Level at the 60-minute cap: golden (universe) point.","cat":{"Mixed":{"squad":[7,16],"format":"First to 15 or a 60-min hard cap; half-time at 7 points or 30 min. 7 on the field (5 men + 2 women). Played at the New Campus sports ground. Spirit of the game."}}}'::jsonb),
+  ('badminton', 'Badminton', 'sets', 5, 'Match', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 12, '{"draws":false,"play_all":true,"inner":"games","cat":{"Men":{"squad":[5,7],"rubbers":["Singles","Doubles","Singles","Doubles","Singles"],"format":"5 matches (S, D, S, D, S), each best of 3 games to 21. Only 2 players may play twice (one singles + one doubles). Every game is played — they count for tie-breaks."},"Women":{"squad":[3,4],"rubbers":["Singles","Doubles","Singles"],"format":"3 matches (S, D, S), each best of 3 games to 21. Only 1 player may play twice. Every game is played — they count for tie-breaks."}}}'::jsonb),
+  ('tabletennis', 'Table Tennis', 'sets', 5, 'Game', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 13, '{"draws":false,"inner":"sets","cat":{"Men":{"squad":[5,7],"rubbers":["Singles","Singles","Doubles","Singles","Doubles"],"format":"5 games (S, S, D, S, D), each best of 5 sets to 11. Two players at most may play one singles + one doubles. 1 time-out per team per game."},"Women":{"squad":[5,7],"rubbers":["Singles","Singles","Doubles","Singles","Doubles"],"format":"5 games (S, S, D, S, D), each best of 5 sets to 11. Two players at most may play one singles + one doubles. 1 time-out per team per game."}}}'::jsonb),
+  ('tennis', 'Lawn Tennis', 'sets', 5, 'Match', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 14, '{"draws":false,"inner":"games","cat":{"Men":{"squad":[4,7],"rubbers":["Singles","Singles","Doubles","Singles","Doubles"],"format":"5 matches (S, S, D, S, D), each a single set with a 10-point tie-break at 6–6. Deuce and advantage scoring."},"Women":{"squad":[2,4],"rubbers":["Singles","Doubles","Singles"],"format":"3 matches (S, D, S), each a single set with a 7-point tie-break at 6–6. Deuce and advantage scoring."}}}'::jsonb),
+  ('squash', 'Squash', 'sets', 5, 'Match', '{1}', 2, 1, 0, 2, '{"Men","Women"}', 15, '{"draws":false,"play_all":true,"inner":"games","cat":{"Men":{"squad":[5,6],"rubbers":["Singles","Singles","Singles","Singles","Singles"],"format":"5 singles matches, each best of 3 games to 11, five different players. All matches are played even after the tie is decided."},"Women":{"squad":[3,4],"rubbers":["Singles","Singles","Singles"],"format":"3 singles matches with 11-point games, three different players. All matches are played even after the tie is decided."}}}'::jsonb),
+  ('athletics', 'Athletics', 'ranking', 1, 'Event', '{1}', 0, 0, 0, 0, '{"Mixed"}', 16, '{"mark_hint":"Time, e.g. 10.84 s","events":{"Mixed":["80 m — Men","80 m — Women","2,000 m — Women","5,000 m — Men"]},"cat":{"Mixed":{"squad":[2,8],"format":"Direct finals, timed: 80 m (men and women), 2,000 m (women), 5,000 m (men). Finish-line video is the evidence. World Athletics rules."}}}'::jsonb),
+  ('swimming', 'Swimming', 'ranking', 1, 'Event', '{1}', 0, 0, 0, 0, '{"Mixed"}', 17, '{"mark_hint":"Time, e.g. 31.42 s","events":{"Mixed":["50 m freestyle — Men","50 m breaststroke — Men","50 m backstroke — Men","50 m butterfly — Men","25 m freestyle — Women","25 m breaststroke — Women","25 m backstroke — Women","25 m butterfly — Women","4 × 25 m freestyle mixed relay"]},"cat":{"Mixed":{"squad":[4,8],"format":"Men swim 50 m and women 25 m in freestyle, breaststroke, backstroke and butterfly, plus a 4 × 25 m freestyle mixed relay (3 men + 1 woman). Push starts, no diving. 2–3 swimmers per college per race; max 2 individual races each."}}}'::jsonb),
+  ('powerlifting', 'Powerlifting', 'ranking', 1, 'Event', '{1}', 0, 0, 0, 0, '{"Men","Women"}', 18, '{"mark_hint":"Total, e.g. 512.5 kg","events":{"Men":["Up to 59 kg","59–66 kg","66–74 kg","74–83 kg","83–93 kg"],"Women":["Up to 55 kg","55–66 kg","Over 66 kg"]},"cat":{"Men":{"squad":[1,10],"format":"Raw. Squat, bench press, deadlift — 3 attempts each; ranked on the total of the best lifts in each bodyweight class (59 / 66 / 74 / 83 / 93 kg). Max 2 lifters per college per class; weigh-in 2 hours before."},"Women":{"squad":[1,6],"format":"Raw. Squat, bench press, deadlift — 3 attempts each; ranked on the total of the best lifts in each bodyweight class (55 / 66 / 66+ kg). Max 2 lifters per college per class; weigh-in 2 hours before."}}}'::jsonb),
+  ('chess', 'Chess', 'points', 1, 'Round', '{0.5,1}', 2, 1, 0, 2, '{"Men","Women"}', 19, '{"draws":true,"tiebreak":["for"],"max_score":4,"tie_note":"Equal game points: 1 match point each. Standings ties: total game points, then two blitz rounds, then Armageddon.","cat":{"Men":{"squad":[4,6],"format":"4 boards (+2 subs, fixed board order), 15 min + 10 s per move. Board win = 1 game point, draw = ½. More game points = 2 match points."},"Women":{"squad":[4,6],"format":"4 boards (+2 subs, fixed board order), 15 min + 10 s per move. Board win = 1 game point, draw = ½. More game points = 2 match points."}}}'::jsonb),
+  ('carrom', 'Carrom', 'sets', 5, 'Game', '{1,3}', 2, 1, 0, 2, '{"Mixed"}', 20, '{"draws":false,"play_all":true,"inner":"points","cat":{"Mixed":{"squad":[5,7],"rubbers":["Men''s singles","Women''s singles","Doubles","Singles","Mixed doubles"],"format":"5 games (men''s singles, women''s singles, doubles, singles, mixed doubles), each 4 boards or 16 points. Queen = 3, other coins = 1. All 5 games are played — board difference breaks standings ties. Quiet sport: no prompting."}}}'::jsonb),
+  ('snooker', 'Snooker', 'sets', 5, 'Match', '{1,2,3,4,5,6,7}', 2, 1, 0, 2, '{"Mixed"}', 21, '{"draws":false,"play_all":true,"inner":"points","tie_note":"Standings ties: head-to-head (2 teams) or total frames won (3+ teams), then play-offs.","cat":{"Mixed":{"squad":[4,7],"rubbers":["Singles","Singles","Doubles","Singles","Doubles"],"format":"5 matches (S, S, D, S, D), 60 minutes each — highest score wins. International rules, no free ball. A player plays at most one singles and one doubles. Quiet sport."}}}'::jsonb),
+  ('fifa', 'FIFA', 'sets', 5, 'Game', '{1}', 2, 1, 0, 2, '{"Mixed"}', 22, '{"draws":false,"inner":"goals","cat":{"Mixed":{"squad":[6,7],"rubbers":["Singles","Doubles","Singles","Doubles","Singles"],"format":"Best of 5 games (S, D, S, D, S), 12 min each (6-min halves), controllers only, PS4. A drawn game goes to extra time, then penalties."}}}'::jsonb),
+  ('valorant', 'Valorant', 'sets', 3, 'Map', '{1}', 2, 1, 0, 2, '{"Mixed"}', 23, '{"draws":false,"inner":"rounds","cat":{"Mixed":{"squad":[5,7],"best_of":3,"format":"Best of 3 maps from the competitive pool (Ascent, Bind, Corrode, Haven, Lotus, Icebox, Sunset); teams ban and pick alternately. One tactical time-out per side. VCT rules."}}}'::jsonb)
+on conflict (id) do update set
+  name = excluded.name, scoring = excluded.scoring, periods = excluded.periods, period_label = excluded.period_label,
+  increments = excluded.increments, win_points = excluded.win_points, draw_points = excluded.draw_points,
+  loss_points = excluded.loss_points, qualify_per_group = excluded.qualify_per_group,
+  categories = excluded.categories, sort_order = excluded.sort_order, rules = excluded.rules;
+-- END SPORTS SEED
 
 -- ---------------------------------------------------------------------
 -- 8. Make yourself the first admin

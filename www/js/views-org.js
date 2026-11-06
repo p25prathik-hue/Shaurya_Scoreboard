@@ -6,6 +6,7 @@ import { icon, kicker, pageHead, emptyState, statusPill, matchRow } from './comp
 import {
   STAGES, stageLabel, initialDetail, patchFromDetail, addScore, nextPeriod, addSetPoint, endSet, setsNeeded, setsWon,
   startInnings, cricketBall, cricketInfo, defaultOvers, periodName, decideWinner, ballsToOvers,
+  bestOf, rubberName, catRules, finishBlocker, hasShootout, extraTimeAllowed, startShootout, addPen, canDraw, squadLimits, tieNote,
 } from './scoring.js';
 
 const CFG = window.SHAURYA_CONFIG || {};
@@ -53,7 +54,7 @@ export function desk() {
       return html`
         <div class="row between" style="padding-top:10px"><span class="org-head">ORGANISER MODE</span><a href="#/" class="small" style="font-weight:700;padding:10px 0">Fan view →</a></div>
         ${pageHead('Organiser desk', roleLine, '')}
-        ${late.map((m) => html`<div class="banner warning">${icon('alert', 18)}<div class="grow"><b>${kicker(m)}</b> was due at ${timeOf(m.starts_at)} and hasn’t started.</div><a class="btn small" href="#/org/score/${m.id}">Start</a></div>`)}
+        ${late.map((m) => html`<div class="banner warning">${icon('alert', 18)}<div class="grow"><b>${kicker(m)}</b> was due at ${timeOf(m.starts_at)}. The 15-minute grace period is over — start it, or award a walkover if a team hasn’t turned up.</div><a class="btn small" href="#/org/score/${m.id}">Open</a></div>`)}
         ${stale.map((m) => html`<div class="banner warning">${icon('alert', 18)}<div class="grow"><b>${store.teamShort(m.team_a_id)} vs ${store.teamShort(m.team_b_id)}</b> is live but hasn’t been updated for 20+ min.</div><a class="btn small" href="#/org/score/${m.id}">Open</a></div>`)}
 
         ${section('Live now', live, true)}
@@ -168,7 +169,7 @@ export function score({ params }) {
       async start(el) {
         const m = store.match(id), s = store.sport(m.sport_id);
         if (s.scoring === 'cricket') {
-          const overs = Number(document.getElementById('overs')?.value) || defaultOvers(s);
+          const overs = Number(document.getElementById('overs')?.value) || defaultOvers(s, m.category);
           const bat = el.dataset.bat;
           const p = startInnings(s, { ...m, detail: initialDetail(s, { overs }) }, bat, overs);
           await push({ ...p, status: 'live' }, `Match started · ${sh(m, bat)} batting (${overs} overs)`);
@@ -194,10 +195,12 @@ export function score({ params }) {
         const m = store.match(id), s = store.sport(m.sport_id);
         const i = m.detail?.current ?? 0;
         const cur = m.detail?.sets?.[i] || [0, 0];
+        if (i >= bestOf(s, m)) { toast('All matches in this tie are done — end the match', 'error'); return; }
         const p = endSet(s, m);
         if (p.error) { toast(p.error, 'error'); return; }
         const w = cur[0] > cur[1] ? 'a' : 'b';
-        await push(p, `${s.period_label} ${i + 1} to ${sh(m, w)} ${fmtNum(cur[0])}–${fmtNum(cur[1])} · ${p.score_a}–${p.score_b}`, w);
+        const rn = rubberName(s, m, i);
+        await push(p, `${s.period_label} ${i + 1}${rn ? ' (' + rn + ')' : ''} to ${sh(m, w)} ${fmtNum(cur[0])}–${fmtNum(cur[1])} · ${p.score_a}–${p.score_b}`, w);
       },
       async ball(el) {
         const m = store.match(id), s = store.sport(m.sport_id);
@@ -223,10 +226,38 @@ export function score({ params }) {
       },
       async finish() {
         const m = store.match(id), s = store.sport(m.sport_id);
+        const block = finishBlocker(s, m);
+        if (block && !m.winner) { toast(block, 'error'); return; }
         if (!confirmSafe('End the match and publish the final result?')) return;
         const p = patchFromDetail(s, m, m.detail || {}, { status: 'completed' });
         const res = s.scoring === 'ranking' ? 'Results published' : p.winner === 'draw' ? `Final · drawn ${fmtNum(p.score_a)}–${fmtNum(p.score_b)}` : `Final · ${sh(m, p.winner)} win ${fmtNum(p.score_a)}–${fmtNum(p.score_b)}${p.result_note ? ' · ' + p.result_note : ''}`;
         await push(p, res);
+      },
+      async shootout() {
+        const m = store.match(id), s = store.sport(m.sport_id);
+        await push(startShootout(s, m), `Penalty shootout · ${fmtNum(m.score_a)}–${fmtNum(m.score_b)} after ${periodName(s, m.detail?.period || 1)}`);
+      },
+      async pen(el) {
+        const m = store.match(id), s = store.sport(m.sport_id);
+        const side = el.dataset.side, scored = el.dataset.scored === '1';
+        const p = addPen(s, m, side, scored);
+        await push(p, `${sh(m, side)} penalty ${scored ? 'scored' : 'missed'} · pens ${p.detail.pens[0]}–${p.detail.pens[1]}`, side);
+      },
+      async superover() {
+        const m = store.match(id), s = store.sport(m.sport_id);
+        const info = cricketInfo(m, s);
+        // Rulebook: the team batting second bats first in the Super Over; alternate after that
+        let bat;
+        if (info.isSuper && info.supers.length % 2 === 1) bat = info.current.bat === 'a' ? 'b' : 'a';
+        else bat = info.mains[1]?.bat || 'b';
+        const p = startInnings(s, m, bat, null, { super: true });
+        await push(p, info.isSuper && info.supers.length % 2 === 1 ? `Super Over · ${sh(m, bat)} need ${info.current.runs + 1}` : `Super Over · ${sh(m, bat)} bat first`);
+      },
+      async walkover(el) {
+        const m = store.match(id), s = store.sport(m.sport_id);
+        const w = el.dataset.side;
+        if (!confirmSafe(`Award a walkover to ${sh(m, w)}? Use this when the other team hasn’t turned up within the 15-minute grace period.`)) return;
+        await push({ status: 'completed', winner: w, result_note: 'won by walkover', status_text: 'Final', detail: initialDetail(s, { category: m.category }), score_a: 0, score_b: 0 }, `Walkover awarded to ${sh(m, w)}`);
       },
       async reopen() {
         const m = store.match(id), s = store.sport(m.sport_id);
@@ -291,15 +322,32 @@ function startPanel(m, s) {
   if (!m.team_a_id && s.scoring !== 'ranking') return html`<div class="card warn">Teams for this match aren’t set yet. ${store.isAdmin ? html`<a href="#/org/fixture/${m.id}">Set them in the fixture</a>.` : 'Ask an admin to set them.'}</div>`;
   if (s.scoring === 'cricket') {
     return html`<div class="card stack"><b style="font-size:17px">Toss done? Who bats first?</b>
-      <div class="field" style="max-width:200px"><label for="overs">Overs per innings</label><input id="overs" class="input" type="number" min="1" max="50" value="${defaultOvers(s)}"></div>
-      <div class="pick-row"><button class="btn primary" type="button" data-act="start" data-bat="a">${a} bat first</button><button class="btn primary" type="button" data-act="start" data-bat="b">${b} bat first</button></div></div>`;
+      <div class="field" style="max-width:200px"><label for="overs">Overs per innings</label><input id="overs" class="input" type="number" min="1" max="50" value="${defaultOvers(s, m.category)}"></div>
+      <div class="pick-row"><button class="btn primary" type="button" data-act="start" data-bat="a">${a} bat first</button><button class="btn primary" type="button" data-act="start" data-bat="b">${b} bat first</button></div>
+      ${walkoverRow(m)}</div>${formatHint(m, s)}`;
   }
   return html`<div class="card stack">
     <div class="row between"><span class="soft">${whenLabel(m.starts_at)}</span>${statusPill(m)}</div>
     <b style="font-size:18px">${s.scoring === 'ranking' ? m.title || 'Event' : `${a} vs ${b}`}</b>
     <button class="btn primary block" type="button" data-act="start">${icon('play', 16)} Start match — go live</button>
     <div class="row"><button class="btn small grow" type="button" data-act="status" data-status="postponed">Postpone</button><button class="btn small grow danger" type="button" data-act="status" data-status="cancelled">Cancel</button></div>
-  </div>`;
+    ${s.scoring !== 'ranking' ? walkoverRow(m) : ''}
+  </div>
+  ${formatHint(m, s)}`;
+}
+
+function walkoverRow(m) {
+  const a = store.teamShort(m.team_a_id, m.team_a_label), b = store.teamShort(m.team_b_id, m.team_b_label);
+  return html`<details class="details"><summary class="small muted">Team didn’t turn up? Award a walkover</summary>
+    <div class="row"><button class="btn small grow" type="button" data-act="walkover" data-side="a">Walkover to ${a}</button><button class="btn small grow" type="button" data-act="walkover" data-side="b">Walkover to ${b}</button></div>
+    <div class="tiny muted mt-s">Rulebook: 15-minute grace period from the announced time, then a walkover is granted unless SportsComm accepts a genuine reason.</div></details>`;
+}
+
+function formatHint(m, s) {
+  const c = catRules(s, m.category);
+  const tie = tieNote(s, m.category);
+  if (!c.format && !tie) return '';
+  return html`<div class="card dashed small soft stack tight"><b class="tiny muted" style="letter-spacing:.08em">RULEBOOK · ${s.name.toUpperCase()} ${m.category.toUpperCase()}</b>${c.format ? html`<span>${c.format}</span>` : ''}${tie ? html`<span>${tie}</span>` : ''}</div>`;
 }
 
 function teamPadCard(m, s, side, scoreText, buttons) {
@@ -318,31 +366,79 @@ function pointsPad(m, s) {
   const d = m.detail || {};
   const per = d.period || 1;
   const atEnd = per >= s.periods;
+  const level = Number(m.score_a) === Number(m.score_b);
+  if (d.pens && !done) return shootoutPad(m, s);
+  // What happens after the last regular period, per the rulebook
+  let nextBtn = '';
+  if (!atEnd) nextBtn = html`<button class="btn small" type="button" data-act="period">End ${periodName(s, per)}</button>`;
+  else if (s.scoring === 'goals') {
+    if (extraTimeAllowed(s, m) && per < s.periods + 2) nextBtn = html`<button class="btn small" type="button" data-act="period">${per === s.periods ? 'Start extra time' : 'End ' + periodName(s, per)}</button>`;
+  } else if (!canDraw(s, m) && s.rules?.tie !== 'golden_point') {
+    nextBtn = html`<button class="btn small" type="button" data-act="period">Start ${periodName(s, per + 1)}</button>`;
+  }
+  const shootoutBtn = !done && atEnd && level && hasShootout(s, m) && (!extraTimeAllowed(s, m) || per >= s.periods + 2)
+    ? html`<button class="btn blue block" type="button" data-act="shootout">Level — start penalty shootout</button>` : '';
+  const maxNote = s.rules?.max_score ? html`<div class="tiny muted">Max ${s.rules.max_score} game points per round (½ for a drawn board).</div>` : '';
   return html`
     <div class="pad-teams">${teamPadCard(m, s, 'a', fmtNum(m.score_a), inc)}${teamPadCard(m, s, 'b', fmtNum(m.score_b), inc)}</div>
+    ${maxNote}
     ${!done ? html`<div class="card row" style="gap:10px">
       <span class="display" style="font-size:26px">${periodName(s, per)}</span>
-      <span class="grow small muted">${s.periods > 1 ? `${s.periods} ${s.period_label.toLowerCase()}s` : ''}</span>
-      ${s.periods > 1 || per > 1 ? html`<button class="btn small" type="button" data-act="period">${atEnd ? 'Extra period' : 'End ' + periodName(s, per)}</button>` : ''}
+      <span class="grow small muted">${s.periods > 1 ? `${s.periods} ${plural(s.period_label)}` : ''}</span>
+      ${nextBtn}
     </div>` : ''}
+    ${shootoutBtn}
+    ${!done && atEnd && level && !canDraw(s, m) && !hasShootout(s, m) ? html`<div class="small soft">${tieNote(s, m.category) || 'Level — the rulebook needs a winner.'}</div>` : ''}
     ${statusTextForm(m)}`;
 }
 
+function shootoutPad(m, s) {
+  const d = m.detail || {};
+  const log = d.pen_log || [];
+  const kicks = (side) => log.filter((k) => k.side === side).map((k) => (k.scored ? '●' : '○')).join(' ');
+  const card = (side) => {
+    const label = store.teamShort(side === 'a' ? m.team_a_id : m.team_b_id);
+    return html`<div class="card pad-team">
+      <span class="code" style="color:${side === 'a' ? 'var(--accent-hover)' : 'var(--team-b)'}">${label}</span>
+      <span class="big">${d.pens[side === 'a' ? 0 : 1]}</span>
+      <span class="small soft" aria-label="Kicks">${kicks(side) || '—'}</span>
+      <div class="pad-btns" style="grid-template-columns:1fr 1fr"><button class="pad-btn ${side}" style="font-size:16px" type="button" data-act="pen" data-side="${side}" data-scored="1">Scored</button><button class="pad-btn minus" style="font-size:16px" type="button" data-act="pen" data-side="${side}" data-scored="0">Missed</button></div>
+    </div>`;
+  };
+  return html`<div class="card row between"><span class="display" style="font-size:24px">Penalty shootout</span><span class="soft">${fmtNum(m.score_a)}–${fmtNum(m.score_b)} after ${periodName(s, d.period || 1)}</span></div>
+    <div class="pad-teams">${card('a')}${card('b')}</div>
+    <div class="tiny muted">${tieNote(s, m.category)}</div>`;
+}
+
+const INNER = { games: 'games', sets: 'sets', points: 'points', goals: 'goals', rounds: 'rounds' };
+const plural = (label) => { const l = label.toLowerCase(); if (l === 'half') return 'halves'; return /(ch|sh|s|x)$/.test(l) ? l + 'es' : l + 's'; };
 function setsPad(m, s) {
   const d = m.detail || {};
   const i = d.current ?? 0;
+  const total = bestOf(s, m);
   const cur = d.sets?.[i] || [0, 0];
   const [wa, wb] = setsWon(d);
-  const need = setsNeeded(s);
+  const need = setsNeeded(s, m);
   const decided = wa >= need || wb >= need;
+  const allDone = i >= total;
   const label = s.period_label || 'Set';
+  const rn = rubberName(s, m, i);
+  const inner = INNER[s.rules?.inner] || 'points';
+  const inc = (s.increments || [1]).map(Number);
+  const leader = store.teamShort(wa > wb ? m.team_a_id : m.team_b_id);
+  let banner = '';
+  if (m.status !== 'completed') {
+    if (allDone) banner = html`<div class="banner info">${icon('info', 18)}<div>All ${total} ${plural(label)} are done — end the match to publish the result.</div></div>`;
+    else if (decided && s.rules?.play_all) banner = html`<div class="banner info">${icon('info', 18)}<div>${leader} has clinched the tie ${wa}–${wb}. Rulebook: the remaining ${plural(label)} are still played — they count for tie-breaks.</div></div>`;
+    else if (decided) banner = html`<div class="banner info">${icon('info', 18)}<div>${leader} has won ${need} ${need === 1 ? label.toLowerCase() : plural(label)} — end the match to publish the result.</div></div>`;
+  }
   return html`
-    <div class="card row between"><span class="display" style="font-size:22px">${label} ${i + 1}</span>
-      <span class="soft">${label}s won <b class="display" style="font-size:22px">${wa}–${wb}</b> · first to ${need}</span></div>
-    <div class="pad-teams">${teamPadCard(m, s, 'a', fmtNum(cur[0]), [1])}${teamPadCard(m, s, 'b', fmtNum(cur[1]), [1])}</div>
-    ${m.status !== 'completed' ? html`<button class="btn block" type="button" data-act="endset" ${cur[0] === cur[1] ? raw('disabled') : ''}>End ${label.toLowerCase()} ${i + 1} (${fmtNum(cur[0])}–${fmtNum(cur[1])})</button>` : ''}
-    ${decided && m.status !== 'completed' ? html`<div class="banner info">${icon('info', 18)}<div>${store.teamShort(wa > wb ? m.team_a_id : m.team_b_id)} has won ${need} ${label.toLowerCase()}s — end the match to publish the result.</div></div>` : ''}
-    ${label === 'Rubber' || label === 'Match' || label === 'Map' ? html`<div class="tiny muted">Use + for each game/point won inside the current ${label.toLowerCase()}, then end it.</div>` : ''}`;
+    <div class="card row between"><span class="display" style="font-size:22px">${allDone ? 'All played' : `${label} ${i + 1} of ${total}`}${rn && !allDone ? html` <span class="pill soon" style="vertical-align:middle">${rn}</span>` : ''}</span>
+      <span class="soft">Won <b class="display" style="font-size:22px">${wa}–${wb}</b> · first to ${need}</span></div>
+    ${!allDone ? html`<div class="tiny muted">Tap + for each ${inner.replace(/s$/, '')} won in this ${label.toLowerCase()}, then end it.</div>
+    <div class="pad-teams">${teamPadCard(m, s, 'a', fmtNum(cur[0]), inc)}${teamPadCard(m, s, 'b', fmtNum(cur[1]), inc)}</div>` : ''}
+    ${m.status !== 'completed' && !allDone ? html`<button class="btn block" type="button" data-act="endset" ${cur[0] === cur[1] ? raw('disabled') : ''}>End ${label.toLowerCase()} ${i + 1} (${fmtNum(cur[0])}–${fmtNum(cur[1])})</button>` : ''}
+    ${banner}`;
 }
 
 function cricketPad(m, s) {
@@ -354,7 +450,7 @@ function cricketPad(m, s) {
   const btn = (label, attrs, cls = '') => html`<button class="ball ${cls}" type="button" data-act="ball" ${raw(attrs)}>${label}</button>`;
   return html`
     <div class="card stack">
-      <div class="row between"><span class="tiny muted" style="font-weight:800;letter-spacing:.1em">${info.innings.length === 1 ? '1ST' : '2ND'} INNINGS · ${bat} BATTING</span><span class="small muted">${info.overs} overs</span></div>
+      <div class="row between"><span class="tiny muted" style="font-weight:800;letter-spacing:.1em">${info.isSuper ? 'SUPER OVER' : info.mains.length === 1 ? '1ST INNINGS' : '2ND INNINGS'} · ${bat} BATTING</span><span class="small muted">${info.isSuper ? '1 over · 2 wickets' : info.overs + ' overs'}</span></div>
       <div class="row" style="align-items:baseline;gap:12px"><span class="display" style="font-size:64px;line-height:.9">${cur.runs}/${cur.wkts}</span><span class="soft" style="font-size:18px">(${ballsToOvers(cur.balls)})</span></div>
       ${info.need ? html`<div class="soft">Target ${info.target} · need <b>${info.need.runs}</b> off ${info.need.balls} balls</div>` : info.rr ? html`<div class="small muted">Run rate ${info.rr} · extras ${cur.extras || 0}</div>` : ''}
     </div>
@@ -363,7 +459,20 @@ function cricketPad(m, s) {
       ${btn('4', 'data-runs="4"', 'four')}${btn('6', 'data-runs="6"', 'six')}${btn('W', 'data-w="1"', 'w')}${btn('Wd', 'data-extra="wd"', 'x')}
       ${btn('Nb', 'data-extra="nb"', 'x')}${btn('Nb+4', 'data-extra="nb" data-runs="4"', 'x')}${btn('Bye', 'data-extra="b" data-runs="1"', 'x')}${btn('Lb', 'data-extra="lb" data-runs="1"', 'x')}
     </div>
-    ${info.innings.length < 2 ? html`<button class="btn block" type="button" data-act="innings">End innings — ${store.teamShort(cur.bat === 'a' ? m.team_b_id : m.team_a_id)} to bat</button>` : ''}` : ''}`;
+    ${info.innings.length < 2 ? html`<button class="btn block" type="button" data-act="innings">End innings — ${store.teamShort(cur.bat === 'a' ? m.team_b_id : m.team_a_id)} to bat</button>` : ''}
+    ${superButtons(m, s, info)}` : ''}`;
+}
+
+function superButtons(m, s, info) {
+  const other = (side) => store.teamShort(side === 'a' ? m.team_b_id : m.team_a_id);
+  if (info.isSuper && info.supers.length % 2 === 1) {
+    return html`<button class="btn blue block" type="button" data-act="superover">End Super Over innings — ${other(info.current.bat)} need ${info.current.runs + 1}</button>`;
+  }
+  if (info.mains.length >= 2 && info.mainsLevel && (!info.supers.length || info.superLevel)) {
+    return html`<button class="btn blue block" type="button" data-act="superover">${info.supers.length ? 'Super Over tied — play another' : 'Scores level — start Super Over'}</button>
+      <div class="tiny muted">${tieNote(s, m.category)}</div>`;
+  }
+  return '';
 }
 
 function rankingPad(m, s) {
@@ -379,7 +488,7 @@ function rankingPad(m, s) {
       <div class="field"><label for="r-pos">Position</label><input id="r-pos" class="input" name="position" type="number" min="1" value="${res.length + 1}"></div>
       <div class="field"><label for="r-team">College</label><select id="r-team" class="input" name="team" required><option value="">Choose…</option>${teams.map((t) => html`<option value="${t.id}">${store.college(t.college_id)?.short_name} · ${t.category}</option>`)}</select></div>
       <div class="field"><label for="r-ath">Athlete</label><input id="r-ath" class="input" name="athlete" placeholder="Name"></div>
-      <div class="field"><label for="r-mark">Time / distance / weight</label><input id="r-mark" class="input" name="mark" placeholder="e.g. 12.41 s"></div>
+      <div class="field"><label for="r-mark">${s.id === 'powerlifting' ? 'Total (best squat + bench + deadlift)' : 'Time'}</label><input id="r-mark" class="input" name="mark" placeholder="${s.rules?.mark_hint || 'e.g. 12.41 s'}"></div>
       <button class="btn primary full" type="submit">${icon('plus', 16)} Add result</button>
     </form>` : ''}`;
 }
@@ -429,6 +538,18 @@ export function fixtures() {
         </div>
         ${list.length ? html`<div class="grid two">${list.map((m) => html`<div>${matchRow(m, '#/org/fixture/' + m.id)}</div>`)}</div>` : emptyState('No fixtures match.')}
         <details class="details card mt">
+          <summary>${icon('trophy', 16)} Create the rulebook events (athletics, swimming, powerlifting)</summary>
+          <div class="stack">
+            <div class="small muted">Adds one fixture per rulebook event that doesn’t exist yet — e.g. 80 m men, 50 m freestyle men, powerlifting 74 kg. Set the times and venues afterwards.</div>
+            ${store.sports.filter((x) => x.scoring === 'ranking').map((x) => {
+              const evs = Object.entries(x.rules?.events || {});
+              const n = evs.reduce((k, [, l]) => k + l.length, 0);
+              const have = store.matches.filter((m) => m.sport_id === x.id && m.stage === 'event').length;
+              return html`<div class="row between"><span><b>${x.name}</b> <span class="small muted">· ${n} events · ${have} created</span></span><button class="btn small" type="button" data-act="mkEvents" data-sport="${x.id}">Create</button></div>`;
+            })}
+          </div>
+        </details>
+        <details class="details card mt">
           <summary>${icon('upload', 16)} Bulk add fixtures from CSV</summary>
           <form class="stack" data-form="csv">
             <div class="small muted">One fixture per line. Columns: <code>sport, category, stage, group, match_no, team_a, team_b, date, time, venue, court</code>. Teams by college short name (e.g. IIMA). Stage: group, quarterfinal, semifinal, final, third_place, round, event. Date as YYYY-MM-DD, time as HH:MM (IST). A header row is ignored.</div>
@@ -440,6 +561,19 @@ export function fixtures() {
     change: {
       sport(el) { fxState.sport = el.value; ui.refresh(); },
       day(el) { fxState.day = el.value; ui.refresh(); },
+    },
+    actions: {
+      async mkEvents(el) {
+        const sp = store.sport(el.dataset.sport);
+        const rows = [];
+        Object.entries(sp.rules?.events || {}).forEach(([category, titles]) => titles.forEach((title) => {
+          if (!store.matches.some((m) => m.sport_id === sp.id && m.category === category && (m.title || '').toLowerCase() === title.toLowerCase())) {
+            rows.push({ sport_id: sp.id, category, stage: 'event', title, starts_at: null });
+          }
+        }));
+        if (!rows.length) { toast('All rulebook events already exist'); return; }
+        if (await run(() => store.saveMany('matches', rows), `${rows.length} ${sp.name} event${rows.length === 1 ? '' : 's'} created`)) ui.refresh();
+      },
     },
     forms: {
       async csv(fd) {
@@ -525,7 +659,8 @@ export function fixture({ params }) {
               ${draft.stage === 'group' || draft.stage === 'league'
                 ? html`<input id="f-group" class="input" name="group_name" data-input="f" value="${draft.group_name || ''}" placeholder="A">`
                 : html`<input id="f-group" class="input" name="match_no" data-input="f" value="${draft.match_no || ''}" placeholder="1">`}</div>
-            ${ranking || draft.stage === 'event' ? html`<div class="field full"><label for="f-title">Event title</label><input id="f-title" class="input" name="title" data-input="f" value="${draft.title || ''}" placeholder="e.g. 100 m sprint final"></div>` : ''}
+            ${ranking || draft.stage === 'event' ? html`<div class="field full"><label for="f-title">Event title</label><input id="f-title" class="input" name="title" data-input="f" value="${draft.title || ''}" placeholder="${(s?.rules?.events?.[draft.category] || [])[0] || 'e.g. 80 m — Men'}" list="f-events">
+              <datalist id="f-events">${(s?.rules?.events?.[draft.category] || []).map((e) => html`<option value="${e}"></option>`)}</datalist></div>` : ''}
             ${!ranking ? html`${teamSelect('a')}${teamSelect('b')}` : ''}
             <div class="field"><label for="f-date">Day</label><select id="f-date" class="input" name="_date" data-change="f">${days.map((d) => html`<option value="${d}" ${sel(draft._date, d)}>${dayLabel(d)}</option>`)}</select></div>
             <div class="field"><label for="f-time">Start time (IST)</label><input id="f-time" class="input" type="time" name="_time" data-input="f" value="${draft._time || ''}" required></div>
@@ -694,6 +829,7 @@ export function roster({ params }) {
         ${pageHead(store.college(t.college_id)?.name || 'Team', `${s?.name} · ${t.category}`, '#/org/teams', html`<a class="icon-btn" href="#/team/${id}" aria-label="View as fan">${icon('users', 18)}</a>`)}
         ${store.isAdmin ? html`<form class="inline-form card" data-form="group"><div class="field"><label for="g-name">Group</label><input id="g-name" class="input" name="group_name" value="${t.group_name || ''}" placeholder="A"></div>
           <button class="btn small" type="submit">Save group</button><button class="btn small danger" type="button" data-act="delTeam">${icon('trash', 16)} Delete team</button></form>` : ''}
+        ${squadBar(list, squadLimits(s, t.category))}
         <div class="section-title"><h2>Squad</h2><span class="small muted">${list ? list.length : ''} players</span></div>
         ${list === null ? html`<div class="loading"><div class="spinner"></div></div>` : list.map((p) => html`<form class="player-row" data-form="player" data-id="${p.id}" style="grid-template-columns:64px minmax(0,1fr) minmax(0,.8fr) auto auto;gap:6px;padding:4px 0">
             <input class="input" name="jersey" value="${p.jersey || ''}" aria-label="Jersey number" style="min-height:42px;padding:6px 8px">
@@ -737,6 +873,17 @@ export function roster({ params }) {
       },
     },
   };
+}
+
+function squadBar(list, lim) {
+  if (!lim || list === null) return '';
+  const n = list.length;
+  const ok = n >= lim[0] && n <= lim[1];
+  const pct = Math.min(100, Math.round((n / lim[1]) * 100));
+  return html`<div class="card stack tight mt-s">
+    <div class="row between"><span class="small"><b>${n}</b> of max ${lim[1]} · min ${lim[0]} (rulebook)</span><span class="pill ${ok ? 'through' : 'warn'}">${n > lim[1] ? 'Over the limit' : n < lim[0] ? 'Below minimum' : 'OK'}</span></div>
+    <span style="height:6px;border-radius:3px;background:var(--line);position:relative;overflow:hidden;display:block"><span style="position:absolute;inset:0 auto 0 0;width:${raw(pct)}%;background:${raw(ok ? 'var(--green)' : 'var(--amber)')}"></span></span>
+  </div>`;
 }
 
 // =====================================================================
@@ -864,7 +1011,12 @@ export function sportsAdmin() {
             <div class="field"><label>Qualify per group</label><input class="input" type="number" min="0" max="8" name="qualify_per_group" value="${s.qualify_per_group}"></div>
             <div class="field"><label>Score buttons</label><input class="input" name="increments" value="${(s.increments || []).join(', ')}"></div>
             <div class="field full"><label>Categories</label><input class="input" name="categories" value="${(s.categories || []).join(', ')}"></div>
+            ${s.scoring !== 'ranking' ? html`<label class="check full"><input type="checkbox" name="draws" ${s.rules?.draws ? raw('checked') : ''}> Group games can end in a draw</label>` : ''}
           </div>
+          <details class="details"><summary class="small muted">Rulebook settings (advanced)</summary>
+            <textarea class="input" name="rules" rows="8">${JSON.stringify(s.rules || {}, null, 2)}</textarea>
+            <div class="tiny muted">Formats, squad sizes, team-tie order (rubbers), best-of, overs, events. Edit carefully — must be valid JSON.</div>
+          </details>
           <button class="btn small" type="submit">Save ${s.name}</button>
         </form>`)}</div>`;
     },
@@ -872,11 +1024,14 @@ export function sportsAdmin() {
       async sport(fd, form) {
         const s = store.sport(form.dataset.id);
         const list = (k) => String(fd.get(k) || '').split(',').map((x) => x.trim()).filter(Boolean);
+        let rules;
+        try { rules = JSON.parse(String(fd.get('rules') || '{}')); } catch (e) { toast('Rulebook settings are not valid JSON', 'error'); return; }
+        if (s.scoring !== 'ranking') rules.draws = !!fd.get('draws');
         await run(() => store.save('sports', {
           ...s,
           periods: Number(fd.get('periods')) || 1, period_label: String(fd.get('period_label')).trim() || s.period_label,
           win_points: Number(fd.get('win_points')), draw_points: Number(fd.get('draw_points')), qualify_per_group: Number(fd.get('qualify_per_group')),
-          increments: list('increments').map(Number).filter((x) => x > 0), categories: list('categories'),
+          increments: list('increments').map(Number).filter((x) => x > 0), categories: list('categories'), rules,
         }), `${s.name} saved`);
       },
     },
